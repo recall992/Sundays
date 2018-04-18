@@ -4,10 +4,10 @@ import com.alibaba.fastjson.JSONArray;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import javax.xml.parsers.ParserConfigurationException;
-import org.apache.log4j.Logger;
-import org.apache.log4j.spi.LoggerFactory;
 import org.apache.poi.openxml4j.exceptions.OpenXML4JException;
 import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.poi.openxml4j.opc.PackageAccess;
@@ -46,6 +46,10 @@ public class ReadXlsx {
 
   private final int minColumns = 0;
 
+  protected Map<String, Map<String, Short>> mergeCells;
+  protected Map<String, Short> currentSheetMerge;
+  protected JSONArray lastRow = null;
+
 
   public List<SheetInfo> getSheets() {
     return sheets;
@@ -82,6 +86,7 @@ public class ReadXlsx {
 
     @Override
     public void endRow(int rowNum) {
+      lastRow = rowData;
       if (rowNum > skipRows - 1 && rowNum < skipRows + readRows) {
         currentSheetContent.add(rowData);
       } else if (rowNum >= skipRows + readRows) {
@@ -106,6 +111,7 @@ public class ReadXlsx {
         cellReference = new CellAddress(currentRow, currentCol).formatAsString();
       }
 
+
       // Did we miss any cells?
       int thisCol = (new CellReference(cellReference)).getCol();
       int missedCols = thisCol - currentCol - 1;
@@ -114,6 +120,41 @@ public class ReadXlsx {
       }
       currentCol = thisCol;
       rowData.add(formattedValue);
+      //处理合并单元格
+      Short merge = currentSheetMerge.remove(cellReference);
+      //合并当前行数据
+      if (merge != null) {
+        for (int i = 0; i < merge; i++) {
+          rowData.add(formattedValue);
+        }
+        currentCol = currentCol + merge;
+      }
+      //合并当前行有空cell
+      currentSheetMerge.forEach((key, value) -> {
+        if (key.matches("[A-Z]*" + currentRow)) {
+          final CellReference reference = new CellReference(key);
+          if (reference.getCol() > currentCol) {
+            for (int i = currentCol; i < reference.getCol(); i++) {
+              rowData.add("");
+            }
+          }
+        }
+      });
+      //合并上一行数据
+      boolean flag = true;
+      while (true) {
+        String cellRef = new CellAddress(currentRow, currentCol).formatAsString();
+        Short aShort = currentSheetMerge.remove(cellRef);
+        if (aShort == null) {
+          break;
+        }
+        final CellReference reference = new CellReference(cellRef);
+        rowData.add(lastRow.getString(reference.getCol()));
+        for (int i = 0; i < aShort; i++) {
+          rowData.add(lastRow.getString(reference.getCol()));
+        }
+        currentCol = currentCol + aShort + 1;
+      }
     }
 
     @Override
@@ -130,8 +171,10 @@ public class ReadXlsx {
    * @throws IOException        .
    * @throws SAXException       .
    */
-  public void process() throws OpenXML4JException, IOException, SAXException {
+  public void process() throws Exception {
     OPCPackage p = OPCPackage.open(filename, PackageAccess.READ);
+    XlsxMergeHandler mergeHandler = new XlsxMergeHandler(p);
+    mergeCells = mergeHandler.getMergeCells();
     ReadOnlySharedStringsTable strings = new ReadOnlySharedStringsTable(p);
     XSSFReader xssfReader = new XSSFReader(p);
     StylesTable styles = xssfReader.getStylesTable();
@@ -140,6 +183,10 @@ public class ReadXlsx {
     while (iter.hasNext()) {
       currentStream = iter.next();
       String sheetName = iter.getSheetName();
+      currentSheetMerge = mergeCells.get(sheetName);
+      if (currentSheetMerge == null) {
+        currentSheetMerge = new HashMap<>();
+      }
       final SheetInfo sheet = new SheetInfo();
       sheet.setSheetName(sheetName);
       sheet.setIndex(index);

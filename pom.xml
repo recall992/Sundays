@@ -11,6 +11,7 @@
     <modules>
         <module>scala</module>
         <module>excel</module>
+        <module>base</module>
     </modules>
 
 

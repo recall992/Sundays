@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
 
+import java.util.Date;
+import java.util.Map;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
@@ -74,6 +76,8 @@ import org.xml.sax.helpers.DefaultHandler;
  * your own!
  */
 public class XLSX2CSV {
+  private Map<String, Map<String, Short>> mergeCells;
+
   /**
    * Uses the XSSF Event SAX helpers to do most of the work
    * of parsing the Sheet XML, and outputs the contents
@@ -143,6 +147,7 @@ public class XLSX2CSV {
         output.append(formattedValue);
         output.append('"');
       }
+
     }
 
     @Override
@@ -152,7 +157,7 @@ public class XLSX2CSV {
   }
 
 
-  private class MergeHandler extends DefaultHandler{
+  private class MergeHandler extends DefaultHandler {
 
     @Override
     public void startElement(String uri, String localName, String qName, Attributes attributes)
@@ -226,10 +231,13 @@ public class XLSX2CSV {
    * @throws IOException  If reading the data from the package fails.
    * @throws SAXException if parsing the XML data fails.
    */
-  public void process() throws IOException, OpenXML4JException, SAXException {
+  public void process() throws Exception {
+    XlsxMergeHandler mergeHandler = new XlsxMergeHandler(this.xlsxPackage);
+    this.mergeCells=mergeHandler.getMergeCells();
     ReadOnlySharedStringsTable strings = new ReadOnlySharedStringsTable(this.xlsxPackage);
     XSSFReader xssfReader = new XSSFReader(this.xlsxPackage);
     StylesTable styles = xssfReader.getStylesTable();
+
     XSSFReader.SheetIterator iter = (XSSFReader.SheetIterator) xssfReader.getSheetsData();
     int index = 0;
     while (iter.hasNext()) {
@@ -238,15 +246,30 @@ public class XLSX2CSV {
         this.output.println();
         this.output.println(sheetName + " [index=" + index + "]:");
         processSheet(styles, strings, new SheetToCSV(), stream);
-
       }
       ++index;
     }
   }
 
-  public static void main(String[] args) throws Exception {
+  private class SheetXmlHandler extends XSSFSheetXMLHandler {
 
-    File xlsxFile = new File("/home/sundays/Desktop/excel/合并单元格2.xlsx");
+    public SheetXmlHandler(StylesTable styles, CommentsTable comments, ReadOnlySharedStringsTable
+        strings, SheetContentsHandler sheetContentsHandler, DataFormatter dataFormatter, boolean
+                               formulasNotResults) {
+      super(styles, comments, strings, sheetContentsHandler, dataFormatter, formulasNotResults);
+    }
+
+    public SheetXmlHandler(StylesTable styles, ReadOnlySharedStringsTable strings,
+                           SheetContentsHandler sheetContentsHandler, DataFormatter
+                               dataFormatter, boolean formulasNotResults) {
+      super(styles, strings, sheetContentsHandler, dataFormatter, formulasNotResults);
+    }
+  }
+
+  public static void main(String[] args) throws Exception {
+    long start = new Date().getTime();
+    String path = "/home/sundays/Desktop/16年.xlsx";
+    File xlsxFile = new File(path);
     if (!xlsxFile.exists()) {
       System.err.println("Not found or not a file: " + xlsxFile.getPath());
       return;
@@ -258,8 +281,10 @@ public class XLSX2CSV {
 
     // The package open is instantaneous, as it should be.
     try (OPCPackage p = OPCPackage.open(xlsxFile.getPath(), PackageAccess.READ)) {
-      XLSX2CSV xlsx2csv = new XLSX2CSV(p, System.out, minColumns);
+      PrintStream printStream = new PrintStream("/home/sundays/Desktop/result.csv");
+      XLSX2CSV xlsx2csv = new XLSX2CSV(p, printStream, minColumns);
       xlsx2csv.process();
     }
+    System.out.println(new Date().getTime() - start);
   }
 }
